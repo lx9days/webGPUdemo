@@ -5,7 +5,7 @@ export function dagreLayout({nodes,edges}=
     {nodes:[0,1,2],edges:[{source:0,target:1},{source:0,target:2}]}
 ) {
     var g = new dagre.graphlib.Graph();
-    g.setGraph({rankdir:'LR'});
+    g.setGraph({rankdir:'LR',ranker:"longest-path-i"});//network-simplex tight-tree longest-path\
     // Default to assigning a new object as a label for each new edge.
     g.setDefaultEdgeLabel(function () { return {}; });
 
@@ -14,8 +14,8 @@ export function dagreLayout({nodes,edges}=
     // our nodes.
     // g.setNode("kspacey", { label: "Kevin Spacey", width: 144, height: 100 });
     // g.setEdge("kspacey", "swilliams");
-    nodes.forEach(n => {
-        g.setNode(n, { label: n, width: 50, height: 20 });
+    nodes.forEach((n, i) => {
+        g.setNode(n.id, { label: i, width: 50, height: 20 });
     })
     edges.forEach(e => {
         g.setEdge(e.source, e.target)
@@ -33,6 +33,7 @@ export function dagreLayout({nodes,edges}=
         result.edges.push(g.edge(e))
         // console.log("Edge " + e.v + " -> " + e.w + ": " + JSON.stringify(g.edge(e)));
     });
+
     return result
 }
 

@@ -641,8 +641,6 @@ fn ring_pick_frag(input: Out) -> @location(0) vec4<f32> {
         let newScale = e.deltaY < 0 ? scale * (1 + zoomStep) : scale * (1 - zoomStep);
         const worldXbefore = (hoverPos1[0] + hoverPos2[0]) / 2
         const worldYbefore = (hoverPos1[1] + hoverPos2[1]) / 2
-        console.log("before", worldXbefore, worldYbefore);
-        console.log(offset);
 
 
         // offset[0] -= (worldXbefore - offset[0]) * (newScale / scale - 1);
@@ -1160,12 +1158,12 @@ function extractDataFromG6(graph, canvas, uvMap, imageUVMap) {
     // const toNDC = createNDCMapper(bounds);
 
     graph.nodes.forEach((node, index) => {
-        const nodeID = encodeIdToColor(index + 1); console.log(nodeID);
+        const nodeID = encodeIdToColor(index + 1); 
 
         const selected = 0;
         const [x, y] = scale(node.x, node.y);
-        const w = node.size / canvas.width * 2;//for JinAn data
-        const h = node.size / canvas.height * 2;
+        const w = node.width / canvas.width * 2;//for JinAn data
+        const h = node.width / canvas.height * 2;
         // const w = node.size[0] / canvas.width * 2;//for G6
         // const h = node.size[1] / canvas.height * 2;
         // const w = node.width / canvas.width * 2;//for GPU
@@ -1196,13 +1194,13 @@ function extractDataFromG6(graph, canvas, uvMap, imageUVMap) {
     });
 
     graph.edges.forEach(edge => {
-        const [x1, y1] = scale(edge.startPoint.x, edge.startPoint.y);
-        const [x2, y2] = scale(edge.endPoint.x, edge.endPoint.y);
+        const [x1, y1] = scale(edge.points[0].x, edge.points[0].y);
+        const [x2, y2] = scale(edge.points[2].x, edge.points[2].y);
         polylines.push(x1, y1, x2, y2);
         arrows.push(x1, y1, x2, y2);
         // const [x1_mini, y1_mini] = toNDC(edge.startPoint.x, edge.startPoint.y);
         // const [x2_mini, y2_mini] = toNDC(edge.endPoint.x, edge.endPoint.y);
-        polylines_mini.push(edge.startPoint.x, edge.startPoint.y, edge.endPoint.x, edge.endPoint.y);
+        polylines_mini.push(edge.points[0].x, edge.points[0].y, edge.points[2].x, edge.points[2].y);
     });
 
     return {

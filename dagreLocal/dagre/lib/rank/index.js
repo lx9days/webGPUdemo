@@ -2,6 +2,7 @@
 
 var rankUtil = require("./util");
 var longestPath = rankUtil.longestPath;
+var longestPath_iterative = rankUtil.longestPath_iterative;
 var feasibleTree = require("./feasible-tree");
 var networkSimplex = require("./network-simplex");
 
@@ -31,12 +32,14 @@ function rank(g) {
   case "network-simplex": networkSimplexRanker(g); break;
   case "tight-tree": tightTreeRanker(g); break;
   case "longest-path": longestPathRanker(g); break;
+  case "longest-path-i": longestPathRanker_iterative(g); break;
   default: networkSimplexRanker(g);
   }
 }
 
 // A fast and simple ranker, but results are far from optimal.
 var longestPathRanker = longestPath;
+var longestPathRanker_iterative = longestPath_iterative;
 
 function tightTreeRanker(g) {
   longestPath(g);
