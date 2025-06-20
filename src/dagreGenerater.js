@@ -5,7 +5,7 @@ export function dagreLayout({nodes,edges}=
     {nodes:[0,1,2],edges:[{source:0,target:1},{source:0,target:2}]}
 ) {
     var g = new dagre.graphlib.Graph();
-    g.setGraph({rankdir:'LR',ranker:"longest-path-i"});//network-simplex tight-tree longest-path\
+    g.setGraph({rankdir:'TB'});//network-simplex tight-tree longest-path\
     // Default to assigning a new object as a label for each new edge.
     g.setDefaultEdgeLabel(function () { return {}; });
 

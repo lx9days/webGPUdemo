@@ -11,7 +11,7 @@ const STYLE = {
     charColor: [0.0, 0.0, 0.0, 0.9],  // 字体颜色
 
     // 节点矩形样式
-    nodeColor: [0.6, 0.6, 0.6, 0.1],
+    nodeColor: [0.6, 0.6, 0.6, 0.0],
     nodeColor_mini: [0.6, 0.6, 0.6, 1.0],
 
     // 连线样式
@@ -21,7 +21,7 @@ const STYLE = {
     // 箭头样式
     arrowColor: [0.3, 0.3, 0.3, 1.0],
     arrowSize: 0.03,             // 箭头大小
-    charShiftY: -0.05,
+    charShiftY: -0.00,
     ringColor: [0.6, 0.6, 0.6, 0.6],
     ringInnerColor: [0.6, 0.2, 0.8, 0.0],
     ringHighlightColor: [0.6, 0.6, 0.6, 0.9],
@@ -658,8 +658,8 @@ fn ring_pick_frag(input: Out) -> @location(0) vec4<f32> {
         const rect = canvas.getBoundingClientRect();
         const px = Math.floor((e.clientX - rect.left));//不要乘以 * devicePixelRatio
         const py = Math.floor((e.clientY - rect.top));
-        console.log("pxpy", px,py);
-        
+        console.log("pxpy", px, py);
+
         updateMatrix()
         // 执行 pick 渲染
         await renderPick(device, bindGroup, shaderModule, ringInstanceBuffer, quadBuffer, pickTexture, pipelineLayout, data);
@@ -1158,7 +1158,7 @@ function extractDataFromG6(graph, canvas, uvMap, imageUVMap) {
     // const toNDC = createNDCMapper(bounds);
 
     graph.nodes.forEach((node, index) => {
-        const nodeID = encodeIdToColor(index + 1); 
+        const nodeID = encodeIdToColor(index + 1);
 
         const selected = 0;
         const [x, y] = scale(node.x, node.y);
@@ -1187,20 +1187,24 @@ function extractDataFromG6(graph, canvas, uvMap, imageUVMap) {
 
 
         const uv = imageUVMap["../data/1.png"] || [0, 0.1, 0, 0.1];
-        imageInstances.push(x + imageOffset, y + imageOffset, w / 2, h / 2, ...uv, ...nodeID, selected)
+        // imageInstances.push(x + imageOffset, y + imageOffset, w / 2, h / 2, ...uv, ...nodeID, selected)
 
         const radius = w * 1.25;
         ringInstances.push(x, y, radius, strokeWidth, ...nodeID, selected)
     });
 
     graph.edges.forEach(edge => {
-        const [x1, y1] = scale(edge.points[0].x, edge.points[0].y);
-        const [x2, y2] = scale(edge.points[2].x, edge.points[2].y);
-        polylines.push(x1, y1, x2, y2);
-        arrows.push(x1, y1, x2, y2);
-        // const [x1_mini, y1_mini] = toNDC(edge.startPoint.x, edge.startPoint.y);
-        // const [x2_mini, y2_mini] = toNDC(edge.endPoint.x, edge.endPoint.y);
-        polylines_mini.push(edge.points[0].x, edge.points[0].y, edge.points[2].x, edge.points[2].y);
+        for (let i = 1; i < edge.points.length; i++) {
+            const [x1, y1] = scale(edge.points[i - 1].x, edge.points[i - 1].y);
+            const [x2, y2] = scale(edge.points[i].x, edge.points[i].y);
+            polylines.push(x1, y1, x2, y2);
+            if (i == edge.points.length - 1) {
+                arrows.push(x1, y1, x2, y2);
+            }
+            // const [x1_mini, y1_mini] = toNDC(edge.startPoint.x, edge.startPoint.y);
+            // const [x2_mini, y2_mini] = toNDC(edge.endPoint.x, edge.endPoint.y);
+            polylines_mini.push(edge.points[0].x, edge.points[0].y, edge.points[2].x, edge.points[2].y);
+        }
     });
 
     return {
