@@ -4,70 +4,91 @@ import { dagreLayout } from "./dagreGenerater";
 
 
 import './style.css';
-import * as G6 from '@antv/g6';
+// import * as G6 from '@antv/g6';
 import originData from '../data/data-11W.csv';
-// import dummyData from "../data/data_11W_dummy.json"
+// // import dummyData from "../data/data_11W_dummy.json"
 import data1 from '../data/data_one'
 import data2 from '../data/data_two'
+import data3 from '../data/data_ring'
+// import fileList from '../data/rome/filenames.json'
+// fileList = []
+// async function loadGraphs() {
+//   const response = await fetch('/data/rome/filenames.json');
+//   const fileList = await response.json();
 
-
-// //data init
-// let attrList = originData.shift()
-// console.log(attrList);
-// function replaceAsterisks(arr) {
-//   return arr.map(subArr => {
-//     // 复制数组，避免修改原始数据
-//     let newArr = [...subArr];
-
-//     // 替换第三列（索引 2）和第六列（索引 5）中所有连续的 `*` 为 `~`
-//     if (typeof newArr[2] === "string") {
-//       newArr[2] = newArr[2].replace(/\*+/g, "~");
+//   for (const filename of fileList.list) {
+//     const graphUrl = `/data/rome/${filename}`;
+//     try {
+//       const res = await fetch(graphUrl);
+//       const graphData = await res.json();
+//       let dagred_data = dagreLayout(graphData)
+//       console.log(dagred_data);
+//       await initWebGPU(dagred_data, filename)
+//       console.log(`Loaded ${filename}`, graphData);
+//     } catch (err) {
+//       console.error(`Failed to load ${filename}:`, err);
 //     }
-//     if (typeof newArr[5] === "string") {
-//       newArr[5] = newArr[5].replace(/\*+/g, "~");
-//     }
-
-//     return newArr;
-//   });
+//     // break
+//   }
 // }
-// let dat = originData
-// function mergeAndDeduplicate(arr) {
-//   // 提取每个子数组的第三项（索引2）和第六项（索引5）
-//   let merged = arr.flatMap(subArr => [subArr[2], subArr[5]]);
+// loadGraphs()
 
-//   // 过滤掉 undefined 值（如果某些子数组的长度不够）
-//   merged = merged.filter(item => item !== undefined);
+//data init
+let attrList = originData.shift()
+function replaceAsterisks(arr) {
+  return arr.map(subArr => {
+    // 复制数组，避免修改原始数据
+    let newArr = [...subArr];
 
-//   // 使用 Set 去重，并转换回数组
-//   return [...new Set(merged)];
-// }
-// function generateEdges(data) {
-//   let edgeMap = new Map();
+    // 替换第三列（索引 2）和第六列（索引 5）中所有连续的 `*` 为 `~`
+    if (typeof newArr[2] === "string") {
+      newArr[2] = newArr[2].replace(/\*+/g, "~");
+    }
+    if (typeof newArr[5] === "string") {
+      newArr[5] = newArr[5].replace(/\*+/g, "~");
+    }
 
-//   data.forEach(subArr => {
-//     let source = subArr[2];  // 假设第一项是 source node
-//     let target = subArr[5];  // 第六项是 target node
-//     let amount = parseFloat(subArr[6]);  // 第七项是转出金额
+    return newArr;
+  });
+}
+let dat = originData
+function mergeAndDeduplicate(arr) {
+  // 提取每个子数组的第三项（索引2）和第六项（索引5）
+  let merged = arr.flatMap(subArr => [subArr[2], subArr[5]]);
 
-//     if (source && target && amount) {
-//       let key = `${source}&${target}`;
-//       edgeMap.set(key, (edgeMap.get(key) || 0) + amount);
-//     }
-//   });
+  // 过滤掉 undefined 值（如果某些子数组的长度不够）
+  merged = merged.filter(item => item !== undefined);
 
-//   // 转换 Map 为数组
-//   let edges = Array.from(edgeMap, ([key, label]) => {
-//     let [source, target] = key.split("&");
-//     return {
-//       source, target
-//       // , label 
-//     };
-//   });
+  // 使用 Set 去重，并转换回数组
+  return [...new Set(merged)];
+}
+function generateEdges(data) {
+  let edgeMap = new Map();
 
-//   return edges;
-// }
-// let cardID = mergeAndDeduplicate(dat)
-// let eList = generateEdges(dat)
+  data.forEach(subArr => {
+    let source = subArr[2];  // 假设第一项是 source node
+    let target = subArr[5];  // 第六项是 target node
+    let amount = parseFloat(subArr[6]);  // 第七项是转出金额
+
+    if (source && target && amount) {
+      let key = `${source}&${target}`;
+      edgeMap.set(key, (edgeMap.get(key) || 0) + amount);
+    }
+  });
+
+  // 转换 Map 为数组
+  let edges = Array.from(edgeMap, ([key, label]) => {
+    let [source, target] = key.split("&");
+    return {
+      source, target
+      // , label
+    };
+  });
+
+  return edges;
+}
+let cardID = mergeAndDeduplicate(dat)
+let eList = generateEdges(dat)
 
 
 let data
@@ -90,6 +111,9 @@ switch (show) {
   case "JA2":
     data = data2
     break;
+     case "JAr":
+    data = data3
+    break;
   case "dummy":
     data = dummyData
     break
@@ -109,9 +133,10 @@ switch (show) {
 
 }
 
+console.log("originData",data);
 let dagred_data = dagreLayout(data)
-console.log(dagred_data);
-initWebGPU(dagred_data)
+
+      await initWebGPU(dagred_data, "onScreen")
 
 // const graph = new G6.Graph({
 //   container: 'container',
@@ -170,45 +195,45 @@ initWebGPU(dagred_data)
 
 
 
-// === 封装函数：添加假节点和假边 ===
-function augmentGraph(data, dummyNodeCount, dummyEdgeCount) {
-  const existingNodeIds = data.nodes.map(n => n.id);
+// // === 封装函数：添加假节点和假边 ===
+// function augmentGraph(data, dummyNodeCount, dummyEdgeCount) {
+//   const existingNodeIds = data.nodes.map(n => n.id);
 
-  // 生成假节点
-  const dummyNodes = Array.from({ length: dummyNodeCount }, (_, i) => {
-    const id = `dummy_${i}`;
-    return { id, label: id };
-  });
+//   // 生成假节点
+//   const dummyNodes = Array.from({ length: dummyNodeCount }, (_, i) => {
+//     const id = `dummy_${i}`;
+//     return { id, label: id };
+//   });
 
-  // 合并所有节点 id（用于生成边）
-  const allNodeIds = existingNodeIds.concat(dummyNodes.map(n => n.id));
+//   // 合并所有节点 id（用于生成边）
+//   const allNodeIds = existingNodeIds.concat(dummyNodes.map(n => n.id));
 
-  // 生成假边
-  const dummyEdges = [];
-  for (let i = 0; i < dummyEdgeCount; i++) {
-    let source, target;
-    do {
-      source = allNodeIds[Math.floor(Math.random() * allNodeIds.length)];
-      target = allNodeIds[Math.floor(Math.random() * allNodeIds.length)];
-    } while (source === target); // 避免自环边
+//   // 生成假边
+//   const dummyEdges = [];
+//   for (let i = 0; i < dummyEdgeCount; i++) {
+//     let source, target;
+//     do {
+//       source = allNodeIds[Math.floor(Math.random() * allNodeIds.length)];
+//       target = allNodeIds[Math.floor(Math.random() * allNodeIds.length)];
+//     } while (source === target); // 避免自环边
 
-    dummyEdges.push({ source, target });
-  }
+//     dummyEdges.push({ source, target });
+//   }
 
-  // 合并进原始数据
-  data.nodes.push(...dummyNodes);
-  data.edges.push(...dummyEdges);
-}
+//   // 合并进原始数据
+//   data.nodes.push(...dummyNodes);
+//   data.edges.push(...dummyEdges);
+// }
 
-function downloadJSON(data, filename = "graph_data.json") {
-  const jsonStr = JSON.stringify(data, null, 2); // 美化格式缩进
-  const blob = new Blob([jsonStr], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
+// function downloadJSON(data, filename = "graph_data.json") {
+//   const jsonStr = JSON.stringify(data, null, 2); // 美化格式缩进
+//   const blob = new Blob([jsonStr], { type: "application/json" });
+//   const url = URL.createObjectURL(blob);
 
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
+//   const a = document.createElement("a");
+//   a.href = url;
+//   a.download = filename;
+//   a.click();
 
-  URL.revokeObjectURL(url); // 清理 URL 对象
-}
+//   URL.revokeObjectURL(url); // 清理 URL 对象
+// }

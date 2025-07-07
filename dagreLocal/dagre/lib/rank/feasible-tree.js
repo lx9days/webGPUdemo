@@ -40,6 +40,8 @@ function feasibleTree(g) {
 
   var edge, delta;
   while (tightTree(t, g) < size) {
+    console.log(12);
+    
     edge = findMinSlackEdge(t, g);
     delta = t.hasNode(edge.v) ? slack(g, edge) : -slack(g, edge);
     shiftRanks(t, g, delta);

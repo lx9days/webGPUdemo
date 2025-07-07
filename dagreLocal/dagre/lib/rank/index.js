@@ -2,7 +2,8 @@
 
 var rankUtil = require("./util");
 var longestPath = rankUtil.longestPath;
-var longestPath_iterative = rankUtil.longestPath_iterative;
+var minWidth = rankUtil.minWidth_algo;
+var stretchWidth_step = rankUtil.stretchWidth_algo;
 var feasibleTree = require("./feasible-tree");
 var networkSimplex = require("./network-simplex");
 
@@ -28,18 +29,22 @@ module.exports = rank;
  *       fix them up later.
  */
 function rank(g) {
-  switch(g.graph().ranker) {
-  case "network-simplex": networkSimplexRanker(g); break;
-  case "tight-tree": tightTreeRanker(g); break;
-  case "longest-path": longestPathRanker(g); break;
-  case "longest-path-i": longestPathRanker_iterative(g); break;
-  default: networkSimplexRanker(g);
+  switch (g.graph().ranker) {
+    case "network-simplex": networkSimplexRanker(g); return true;
+    case "tight-tree": tightTreeRanker(g); return true;
+    case "longest-path": longestPathRanker(g); return true;
+    case "min-width": return minWidth(g, { UBW : 9, c : 2, strategy : 'A1' })
+    case "stretch-width": stretchWidth(g); break;
+    default:
+      // networkSimplexRanker(g);
+      return true
+    // minWidth(g, { UBW : 9, c : 2, strategy : 'A1' })
   }
 }
 
 // A fast and simple ranker, but results are far from optimal.
 var longestPathRanker = longestPath;
-var longestPathRanker_iterative = longestPath_iterative;
+var minWidth = minWidth;
 
 function tightTreeRanker(g) {
   longestPath(g);
@@ -48,4 +53,34 @@ function tightTreeRanker(g) {
 
 function networkSimplexRanker(g) {
   networkSimplex(g);
+}
+
+function stretchWidth(g) {
+  let success = false
+  let maxOut = 0;
+  let maxIn = 0;
+  let maxOutNode
+  let maxInNode
+
+  g.nodes().forEach(v => {
+    const dOut = (g.outEdges(v) || []).length;  // 出度 d⁺(v)
+    const dIn = (g.inEdges(v) || []).length;   // 入度 d⁻(v)
+    console.log(dIn);
+    if(dIn == 0) return
+
+    if (dOut > maxOut) {maxOut = dOut; maxOutNode = v}
+    if (dIn > maxIn) {maxIn = dIn; maxInNode = v}
+  });
+
+  console.log('max d⁺ =', maxOut,' for node ',maxOutNode, 'max d⁻ =', maxIn, ' for node ', maxInNode);
+
+  // StretchWidth 初始化上限时常用：
+  let initialMaxWidth = Math.max(maxOut, maxIn);
+  while (!success) {
+    console.log("UBW", initialMaxWidth);
+    success = stretchWidth_step(g, { UBW: initialMaxWidth })
+    initialMaxWidth*=1.1
+
+  }
+  return success
 }

@@ -1,10 +1,12 @@
 import { mat3, vec2 } from 'gl-matrix';
 // === 全局样式配置 ===
 const sampleCount = 4; // 开启 4 倍 MSAA
+// savePNGOnce.js
+const done = new Set();
 let msaaTexture = null; //  提前声明全局变量
 // 字符渲染样式
 const STYLE = {
-    charSize: 0.015,             // 字体宽（世界坐标）
+    charSize: 0.005,             // 字体宽（世界坐标）
     charHeightRatio: 1.5,        // 字体高宽比
     charSpacingRatio: 0.1,       // 字符之间的空隙（占charSize的比例）
     clearColor: [1.0, 1.0, 1.0, 0.1],//background
@@ -15,14 +17,14 @@ const STYLE = {
     nodeColor_mini: [0.6, 0.6, 0.6, 1.0],
 
     // 连线样式
-    edgeColor: [0.5, 0.5, 0.5, 0.5],
+    edgeColor: [0.5, 0.5, 0.5, 1.0],
     edgeColor_mini: [0.5, 0.5, 0.5, 1.0],
 
     // 箭头样式
     arrowColor: [0.3, 0.3, 0.3, 1.0],
-    arrowSize: 0.03,             // 箭头大小
+    arrowSize: 0.01,             // 箭头大小
     charShiftY: -0.00,
-    ringColor: [0.6, 0.6, 0.6, 0.6],
+    ringColor: [0.6, 0.6, 0.6, 1.0],
     ringInnerColor: [0.6, 0.2, 0.8, 0.0],
     ringHighlightColor: [0.6, 0.6, 0.6, 0.9],
 
@@ -32,7 +34,7 @@ let undoStack = []
 let redoStack = []
 
 
-export async function initWebGPU(graph) {
+export async function initWebGPU(graph, savePath = "11", type = "onScreen") {
     if (!navigator.gpu) {
         alert("WebGPU not supported");
         return;
@@ -83,7 +85,11 @@ export async function initWebGPU(graph) {
 
 
 
-    const data = extractDataFromG6(graph, canvas, uvMap, imageUVMap);
+    const data = extractDataFromG6(graph, canvas, uvMap, imageUVMap, type);
+    if (!data) {
+        console.log("rank failed");
+        return
+    }
 
     //↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑图元需要的额外资源
 
@@ -384,7 +390,8 @@ fn ring_vertex(input: RingIn) -> Out {
             fontColor =  vec4<f32>(1.0, 0.0, 0.0, 1.0);
         } 
         
-        return vec4<f32>(fontColor.rgb, fontColor.a * tex.a);
+        // return vec4<f32>(fontColor.rgb, fontColor.a * tex.a);
+        return vec4<f32>(fontColor.rgb, 1.0);
         }
 
         @vertex
@@ -477,10 +484,10 @@ fn ring_pick_frag(input: Out) -> @location(0) vec4<f32> {
         -0.5, 0.5, 0.5, 0.5
     ]), GPUBufferUsage.VERTEX);
     const charInstanceBuffer = createBuffer(device, data.charData, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,);
-    console.log("charData length:", data.charData.length);
-    console.log("charData example:", data.charData.slice(0, 12));
-    const expectedBytes = data.charData.length * Float32Array.BYTES_PER_ELEMENT;
-    console.log("charInstanceBuffer size:", expectedBytes);
+    // console.log("charData length:", data.charData.length);
+    // console.log("charData example:", data.charData.slice(0, 12));
+    // const expectedBytes = data.charData.length * Float32Array.BYTES_PER_ELEMENT;
+    // console.log("charInstanceBuffer size:", expectedBytes);
 
     const rectBuffer_mini = createBuffer(device, data.rects_mini, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,);
     const lineBuffer_mini = createBuffer(device, data.polylines_mini, GPUBufferUsage.VERTEX);
@@ -791,47 +798,83 @@ fn ring_pick_frag(input: Out) -> @location(0) vec4<f32> {
 
     updateMiniMapMatrix()
 
-
+    const msaaTexture = device.createTexture({
+        size: [canvas.width, canvas.height],
+        sampleCount,
+        format,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT
+    });
+    const resolveTexture = device.createTexture({
+        size: [canvas.width, canvas.height],
+        format: format,
+        // 👇 默认 sampleCount = 1  —— 不要写 4！
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
+    });
     // === 渲染帧
     function frame() {
 
         const encoder = device.createCommandEncoder();
 
-        // 🧠 检查是否需要重建 MSAA 纹理（第一次 or 尺寸变了）
-        if (!msaaTexture || msaaTexture.width !== canvas.width || msaaTexture.height !== canvas.height) {
-            msaaTexture = device.createTexture({
-                size: [canvas.width, canvas.height],
-                sampleCount,
-                format,
-                usage: GPUTextureUsage.RENDER_ATTACHMENT
+        // // 🧠 检查是否需要重建 MSAA 纹理（第一次 or 尺寸变了）
+        // if (!msaaTexture || msaaTexture.width !== canvas.width || msaaTexture.height !== canvas.height) {
+        //     msaaTexture = device.createTexture({
+        //         size: [canvas.width, canvas.height],
+        //         sampleCount,
+        //         format,
+        //         usage: GPUTextureUsage.RENDER_ATTACHMENT
+        //     });
+        //     // ② 单采样解析纹理：既能当 resolveTarget，也能 COPY_SRC
+        //     const resolveTexture = device.createTexture({
+        //         size: [canvas.width, canvas.height],
+        //         format: format,
+        //         // 👇 默认 sampleCount = 1  —— 不要写 4！
+        //         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
+        //     });
+        // }
+
+
+        let pass
+        if (type === "onScreen") {
+            pass = encoder.beginRenderPass({
+                colorAttachments: [{
+                    view: msaaTexture.createView(),  // 渲染到 MSAA 纹理
+                    resolveTarget: context.getCurrentTexture().createView(), // 解析结果输出到最终画布
+                    loadOp: "clear",
+                    storeOp: "store",
+                    clearValue: STYLE.clearColor
+                }]
+            });
+        } else if (type === "offScreen") {
+            // ② 单采样解析纹理：既能当 resolveTarget，也能 COPY_SRC
+            pass = encoder.beginRenderPass({
+                colorAttachments: [{
+                    view: msaaTexture.createView(),   // 4× MSAA
+                    resolveTarget: resolveTexture.createView(),// 1× 单采样
+                    loadOp: "clear",
+                    storeOp: "store",
+                    clearValue: STYLE.clearColor
+                }]
             });
         }
-
-        const pass = encoder.beginRenderPass({
-            colorAttachments: [{
-                view: msaaTexture.createView(),  // 渲染到 MSAA 纹理
-                resolveTarget: context.getCurrentTexture().createView(), // 解析结果输出到最终画布
-                loadOp: "clear",
-                storeOp: "store",
-                clearValue: STYLE.clearColor
-            }]
-        });
-
         pass.setBindGroup(0, bindGroup);
 
+        pass.setPipeline(ringPipeline);
+        pass.setVertexBuffer(0, quadBuffer);           // [-0.5, -0.5] ~ [0.5, 0.5]
+        pass.setVertexBuffer(1, ringInstanceBuffer);   // 圆环数据
+        pass.draw(4, data.ringInstances.length / 9);
         pass.setPipeline(linePipeline);
         pass.setVertexBuffer(0, lineBuffer);
         pass.draw(data.polylines.length / 2);
 
-        pass.setPipeline(rectPipeline);
-        pass.setVertexBuffer(0, quadBuffer);
-        pass.setVertexBuffer(1, rectBuffer);
-        pass.draw(4, data.rects.length / 13);
+        // pass.setPipeline(rectPipeline);
+        // pass.setVertexBuffer(0, quadBuffer);
+        // pass.setVertexBuffer(1, rectBuffer);
+        // pass.draw(4, data.rects.length / 13);
 
-        pass.setPipeline(imagePipeline);
-        pass.setVertexBuffer(0, quadBuffer);
-        pass.setVertexBuffer(1, imageInstanceBuffer);
-        pass.draw(4, data.imageInstances.length / 13); // 每个 instance 8 个 float
+        // pass.setPipeline(imagePipeline);
+        // pass.setVertexBuffer(0, quadBuffer);
+        // pass.setVertexBuffer(1, imageInstanceBuffer);
+        // pass.draw(4, data.imageInstances.length / 13); // 每个 instance 8 个 float
 
         pass.setPipeline(arrowPipeline);
         pass.setVertexBuffer(0, arrowVertexBuffer);
@@ -843,53 +886,64 @@ fn ring_pick_frag(input: Out) -> @location(0) vec4<f32> {
         pass.setVertexBuffer(1, charInstanceBuffer);
         pass.draw(4, data.charData.length / 11);
 
-        pass.setPipeline(ringPipeline);
-        pass.setVertexBuffer(0, quadBuffer);           // [-0.5, -0.5] ~ [0.5, 0.5]
-        pass.setVertexBuffer(1, ringInstanceBuffer);   // 圆环数据
-        pass.draw(4, data.ringInstances.length / 9);
 
         pass.end();
         device.queue.submit([encoder.finish()]);
 
 
-        // === 小地图渲染逻辑 ===
-        const miniMapEncoder = device.createCommandEncoder();
-        const miniMapPass = miniMapEncoder.beginRenderPass({
-            colorAttachments: [{
-                view: miniMapContext.getCurrentTexture().createView(),
-                loadOp: "clear",
-                storeOp: "store",
-                clearValue: { r: 1, g: 1, b: 1, a: 1 }
-            }]
-        });
-        miniMapPass.setBindGroup(0, miniMapBindGroup);
+        if (type === "onScreen") {
+            // === 小地图渲染逻辑 ===
+            const miniMapEncoder = device.createCommandEncoder();
+            const miniMapPass = miniMapEncoder.beginRenderPass({
+                colorAttachments: [{
+                    view: miniMapContext.getCurrentTexture().createView(),
+                    loadOp: "clear",
+                    storeOp: "store",
+                    clearValue: { r: 1, g: 1, b: 1, a: 1 }
+                }]
+            });
+            miniMapPass.setBindGroup(0, miniMapBindGroup);
 
-        // 边
-        miniMapPass.setPipeline(miniMapLinePipeline);
-        miniMapPass.setVertexBuffer(0, lineBuffer_mini);
-        miniMapPass.draw(data.polylines_mini.length / 2);
+            // 边
+            miniMapPass.setPipeline(miniMapLinePipeline);
+            miniMapPass.setVertexBuffer(0, lineBuffer_mini);
+            miniMapPass.draw(data.polylines_mini.length / 2);
 
-        // 节点矩形
-        miniMapPass.setPipeline(miniMapRectPipeline);
-        miniMapPass.setVertexBuffer(0, quadBuffer);
-        miniMapPass.setVertexBuffer(1, rectBuffer_mini);
-        miniMapPass.draw(4, data.rects_mini.length / 13);
+            // 节点矩形
+            miniMapPass.setPipeline(miniMapRectPipeline);
+            miniMapPass.setVertexBuffer(0, quadBuffer);
+            miniMapPass.setVertexBuffer(1, rectBuffer_mini);
+            miniMapPass.draw(4, data.rects_mini.length / 13);
 
-        // 绘制主视图框
-        miniMapPass.setPipeline(miniMapRectPipeline);
-        miniMapPass.setVertexBuffer(0, quadBuffer);
-        miniMapPass.setVertexBuffer(1, viewRectBuffer);
-        miniMapPass.draw(4, 1);
+            // 绘制主视图框
+            miniMapPass.setPipeline(miniMapRectPipeline);
+            miniMapPass.setVertexBuffer(0, quadBuffer);
+            miniMapPass.setVertexBuffer(1, viewRectBuffer);
+            miniMapPass.draw(4, 1);
 
 
-        miniMapPass.end();
-        device.queue.submit([miniMapEncoder.finish()]);
+            miniMapPass.end();
+            device.queue.submit([miniMapEncoder.finish()]);
 
-        requestAnimationFrame(frame);
+            requestAnimationFrame(frame);
+        }
+
     }
 
 
     frame();
+    if (type === "offScreen") {
+    savePNG(device, resolveTexture, canvas.width, canvas.height, savePath.replace(/\.json$/i, '.png'));
+        await savePNGOnce(
+            device,
+            resolveTexture,
+            canvas.width,
+            canvas.height,
+            savePath.replace(/\.json$/i, '.png')
+        );
+        device.destroy()
+    }
+
 }
 
 // === 辅助函数
@@ -1134,10 +1188,23 @@ function createCharUVMap(charList) {
 }
 
 
-function extractDataFromG6(graph, canvas, uvMap, imageUVMap) {
-    function scale(px, py) {
-        return [(px / canvas.width) * 2 - 1, 1 - (py / canvas.height) * 2];
+function extractDataFromG6(graph, canvas, uvMap, imageUVMap, type) {
+    if (!graph.minWidthSuccess) {
+        return
     }
+    let maxDist, scale
+    if (type === "onScreen") {
+        maxDist = canvas.width
+        scale = (px, py) => {
+            return [(px / canvas.width) * 2 - 1, 1 - (py / canvas.height) * 2];
+        }
+    } else if (type === "offScreen") {
+        maxDist = getGraphMaxDist(graph.nodes)
+        scale = (px, py) => {
+            return [(px / maxDist) * 1.8 - 0.9, 0.9 - (py / maxDist) * 1.8];
+        }
+    }
+
 
     let rects = [],
         polylines = [],
@@ -1162,8 +1229,8 @@ function extractDataFromG6(graph, canvas, uvMap, imageUVMap) {
 
         const selected = 0;
         const [x, y] = scale(node.x, node.y);
-        const w = node.width / canvas.width * 2;//for JinAn data
-        const h = node.width / canvas.height * 2;
+        const w = node.width / maxDist * 2;//for JinAn data
+        const h = node.width / maxDist * 2;
         // const w = node.size[0] / canvas.width * 2;//for G6
         // const h = node.size[1] / canvas.height * 2;
         // const w = node.width / canvas.width * 2;//for GPU
@@ -1379,7 +1446,6 @@ function getGraphBounds(nodes) {
         if (node.y < minY) minY = node.y;
         if (node.y > maxY) maxY = node.y;
     });
-
     return { minX, minY, maxX, maxY };
 }
 
@@ -1466,4 +1532,109 @@ function canvasToWorld(x_px, y_px, canvasWidth, canvasHeight, viewMatrix) {
     vec2.transformMat3(world, ndc, invViewMatrix);
 
     return world;
+}
+
+/** 确保同名文件只保存一次 */
+export async function savePNGOnce(device, tex, width, height, name) {
+    if (done.has(name)) return;   // 已保存过
+    done.add(name);
+
+    /* === 下面保留你原来的实现 === */
+    const aligned = Math.ceil(width * 4 / 256) * 256;
+    const readBuf = device.createBuffer({
+        size: aligned * height,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+    });
+
+    const enc = device.createCommandEncoder();
+    enc.copyTextureToBuffer(
+        { texture: tex },
+        { buffer: readBuf, bytesPerRow: aligned },
+        [width, height, 1]
+    );
+    device.queue.submit([enc.finish()]);
+    await device.queue.onSubmittedWorkDone();
+    await readBuf.mapAsync(GPUMapMode.READ);
+
+    const raw = readBuf.getMappedRange();
+    const rgba = new Uint8ClampedArray(width * height * 4);
+    for (let y = 0; y < height; ++y) {
+        rgba.set(new Uint8Array(raw, y * aligned, width * 4), y * width * 4);
+    }
+    readBuf.unmap();
+
+
+    const off = new OffscreenCanvas(width, height);
+    const ctx = off.getContext("2d");
+    if (!ctx) throw new Error("2D context unavailable");
+    ctx.putImageData(new ImageData(rgba, width, height), 0, 0);
+
+    const blob = await off.convertToBlob({ type: 'image/png' });
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement('a'), {
+        href: url, download: name
+    });
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+async function savePNG(device, tex, width, height, fileName = "frame.png") {
+    const aligned = Math.ceil(width * 4 / 256) * 256;
+    const readBuf = device.createBuffer({
+        size: aligned * height,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+    });
+
+    const enc = device.createCommandEncoder();
+    enc.copyTextureToBuffer(
+        { texture: tex },
+        { buffer: readBuf, bytesPerRow: aligned },
+        [width, height, 1]
+    );
+    device.queue.submit([enc.finish()]);
+    await device.queue.onSubmittedWorkDone();
+    await readBuf.mapAsync(GPUMapMode.READ);
+
+    // 去掉行对齐
+    const raw = readBuf.getMappedRange();
+    const rgba = new Uint8ClampedArray(width * height * 4);
+    for (let y = 0; y < height; ++y) {
+        rgba.set(new Uint8Array(raw, y * aligned, width * 4), y * width * 4);
+    }
+    readBuf.unmap();
+
+    const off = new OffscreenCanvas(width, height);
+    const ctx = off.getContext("2d");
+    if (!ctx) throw new Error("2D context unavailable");
+    ctx.putImageData(new ImageData(rgba, width, height), 0, 0);
+
+    const blob = await off.convertToBlob({ type: "image/png" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+function getGraphMaxDist(nodes) {
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
+
+    nodes.forEach(n => {
+        // G6 节点通常有 width / height，也可能只有 size
+        const w = n.width ?? (Array.isArray(n.size) ? n.size[0] : n.size);
+        const h = n.height ?? (Array.isArray(n.size) ? n.size[1] : n.size);
+
+        minX = Math.min(minX, n.x - w * 0.5);
+        minY = Math.min(minY, n.y - h * 0.5);
+        maxX = Math.max(maxX, n.x + w * 0.5);
+        maxY = Math.max(maxY, n.y + h * 0.5);
+    });
+
+    if (maxY - minY >= maxX - minX) {
+        return maxY - minY
+    } else {
+        return maxX - minX
+    }
 }
