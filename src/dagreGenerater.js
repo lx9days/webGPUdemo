@@ -2,7 +2,7 @@
 import dagre from "@dagrejs/dagre"
 export function dagreLayout({nodes,links, edges}) {
     var g = new dagre.graphlib.Graph();
-    g.setGraph({rankdir:'TB', ranker:"network-simplex"});//network-simplex tight-tree longest-path\
+    g.setGraph({rankdir:'TB', ranker:"min-width"});//network-simplex tight-tree longest-path\
     // Default to assigning a new object as a label for each new edge.
     g.setDefaultEdgeLabel(function () { return {}; });
 

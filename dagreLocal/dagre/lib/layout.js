@@ -39,12 +39,12 @@ function runLayout(g, time, opts) {
     return rankSuccess
   }
 
-  // time("    injectEdgeLabelProxies", () => injectEdgeLabelProxies(g));
+  time("    injectEdgeLabelProxies", () => injectEdgeLabelProxies(g));
   time("    removeEmptyRanks", () => removeEmptyRanks(g));
   time("    nestingGraph.cleanup", () => nestingGraph.cleanup(g));
   time("    normalizeRanks", () => normalizeRanks(g));
   time("    assignRankMinMax", () => assignRankMinMax(g));
-  // time("    removeEdgeLabelProxies", () => removeEdgeLabelProxies(g));
+  time("    removeEdgeLabelProxies", () => removeEdgeLabelProxies(g));
   time("    normalize.run", () => normalize.run(g));
   time("    parentDummyChains", () => parentDummyChains(g));
   time("    addBorderSegments", () => addBorderSegments(g));

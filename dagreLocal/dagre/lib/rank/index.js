@@ -33,8 +33,8 @@ function rank(g) {
     case "network-simplex": networkSimplexRanker(g); return true;
     case "tight-tree": tightTreeRanker(g); return true;
     case "longest-path": longestPathRanker(g); return true;
-    case "min-width": return minWidth(g, { UBW : 9, c : 2, strategy : 'A1' })
-    case "stretch-width": stretchWidth(g); break;
+    case "min-width": return minWidth(g, { UBW : 40, c : 2, strategy : 'A1' })
+    case "stretch-width": return stretchWidth(g); break;
     default:
       // networkSimplexRanker(g);
       return true
@@ -65,7 +65,7 @@ function stretchWidth(g) {
   g.nodes().forEach(v => {
     const dOut = (g.outEdges(v) || []).length;  // 出度 d⁺(v)
     const dIn = (g.inEdges(v) || []).length;   // 入度 d⁻(v)
-    console.log(dIn);
+    // console.log(dIn);
     if(dIn == 0) return
 
     if (dOut > maxOut) {maxOut = dOut; maxOutNode = v}
@@ -79,7 +79,7 @@ function stretchWidth(g) {
   while (!success) {
     console.log("UBW", initialMaxWidth);
     success = stretchWidth_step(g, { UBW: initialMaxWidth })
-    initialMaxWidth*=1.1
+    initialMaxWidth++
 
   }
   return success
