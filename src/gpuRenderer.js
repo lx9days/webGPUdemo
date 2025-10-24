@@ -1896,20 +1896,31 @@ function arrowMoveById(id, arr, stride, selectedOffset, [shiftX, shiftY], polyAr
             continue;
         }
         segIdxList.sort((a, b) => a - b);
+        // 使用与初始化一致的四次贝塞尔端点切线来计算箭头方向
+        const firstSegI = segIdxList[0] + 1;
         const lastSegI = segIdxList[segIdxList.length - 1] + 1;
-        const ax0 = polyArr[(lastSegI - 1) * polyStride + 0];
-        const ay0 = polyArr[(lastSegI - 1) * polyStride + 1];
-        const ax1 = polyArr[(lastSegI - 1) * polyStride + 6];
-        const ay1 = polyArr[(lastSegI - 1) * polyStride + 7];
+        const sx = polyArr[(firstSegI - 1) * polyStride + 0];
+        const sy = polyArr[(firstSegI - 1) * polyStride + 1];
+        const tx = polyArr[(lastSegI - 1) * polyStride + 6];
+        const ty = polyArr[(lastSegI - 1) * polyStride + 7];
 
-        // 以最后一段为方向，箭头尖端贴合终点，基点按 nearDist 后退
-        const L = Math.hypot(ax1 - ax0, ay1 - ay0) || 1.0;
+        // 构造与采样一致的“中心对称四次曲线”控制点：P0=(sx,sy), P1=(tx,sy)->中心插值, P2=中心, P3=(sx,ty)->中心插值, P4=(tx,ty)
+        const midx = (sx + tx) * 0.5;
+        const midy = (sy + ty) * 0.5;
+        const alphaX = (STYLE.edgeCurveOffsetRatioX ?? 0.25);
+        const alphaY = (STYLE.edgeCurveOffsetRatioY ?? 0.25);
+        const p3x = sx * (1 - alphaX) + midx * alphaX; // 靠近终点的角点（起点角点 -> 中心）
+        const p3y = ty * (1 - alphaY) + midy * alphaY;
+
+        // 四次贝塞尔在 t=1 的切线方向：B'(1) = 4*(P4 - P3)
+        const dx = (tx - p3x);
+        const dy = (ty - p3y);
+        const len = Math.hypot(dx, dy) || 1.0;
         const nearDist = (STYLE.arrowSize ?? 0.03) * 0.5;
-        const r = Math.min(1.0, nearDist / L);
-        const px1 = ax1 * (1 - r) + ax0 * r;
-        const py1 = ay1 * (1 - r) + ay0 * r;
-        const tipX = ax1;
-        const tipY = ay1;
+        const tipX = tx;
+        const tipY = ty;
+        const px1 = tipX - (dx / len) * nearDist;
+        const py1 = tipY - (dy / len) * nearDist;
 
         // 写回箭头实例
         arr[(i - 1) * stride + 0] = px1;
