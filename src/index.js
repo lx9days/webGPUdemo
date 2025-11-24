@@ -73,6 +73,7 @@ let eList = generateEdges(dat)
 
 let data
 const show = "JA2"
+const lineType = "line"
 switch (show) {
   case "large":
     data = {
@@ -86,10 +87,24 @@ switch (show) {
     }
     break;
   case "JA1":
-    data = data1
+    {data = data1
+      data.edges = data.edges.map(d => {
+        return {
+          ...d,
+          lineType: lineType
+        }
+      })
+    }
     break;
   case "JA2":
-    data = data2
+    {data = data2
+      data.edges = data.edges.map(d => {
+        return {
+          ...d,
+          lineType: lineType
+        }
+      })
+    }
     break;
   case "dummy":
     data = dummyData

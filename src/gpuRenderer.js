@@ -21,6 +21,7 @@ const STYLE = {
     edgeCurveOffsetRatioX: 0.75, // X方向曲率：相对连线长度的偏移比例
     edgeCurveOffsetRatioY: 0.5, // Y方向曲率：相对连线长度的偏移比例
     edgeCurveSegments: 24,     // 采样段数：越大越平滑
+    edgeGlobalStraight: false,//控制全局边长
 
     // 箭头样式
     arrowColor: [0.3, 0.3, 0.3, 1.0],
@@ -62,6 +63,7 @@ let DataManager = {
     edgeColorIdMap: new Map(), // 边颜色ID映射
     adjGraph: new Map(), // 邻接图
     adjGraph_arrow: new Map(), // 邻接图, 用于存储箭头
+    straightEdges: new Set(), // 直线边集合（有向：source->target）
     miniMapViewMatrix: null,
 }
 const commandDict = {
@@ -1032,7 +1034,7 @@ fn ring_pick_frag(input: Out) -> @location(0) vec4<f32> {
 
             markMoveById(signal.mouseDownID, data.rects_mini, 13, -1, [shiftX_canvas, shiftY_canvas]);
             device.queue.writeBuffer(rectBuffer_mini, 0, data.rects_mini.buffer);
-            edgeMoveById(signal.mouseDownID, data.polylines_mini, 12, -1, [shiftX_canvas, shiftY_canvas]);
+            mini_EdgeMoveById(signal.mouseDownID, data.polylines_mini, 12, -1, [shiftX_canvas, shiftY_canvas]);
             device.queue.writeBuffer(lineBuffer_mini, 0, data.polylines_mini.buffer);
 
             const inv = mat3.create();
@@ -1564,6 +1566,11 @@ function createCharUVMap(charList) {
 
 
 function extractDataFromG6(graph, canvas, uvMap, imageUVMap) {
+    DataManager.nodeColorIdMap.clear();
+    DataManager.edgeColorIdMap.clear();
+    DataManager.adjGraph.clear();
+    DataManager.adjGraph_arrow.clear();
+    DataManager.straightEdges.clear();
     function scale(px, py) {
         return [(px / canvas.width) * 2 - 1, 1 - (py / canvas.height) * 2];
     }
@@ -1659,64 +1666,98 @@ function extractDataFromG6(graph, canvas, uvMap, imageUVMap) {
             DataManager.adjGraph_arrow.get([edge.sourceColorId[0], edge.sourceColorId[1], edge.sourceColorId[2]].join(",")).add(arrowOffsetCount);
             DataManager.adjGraph_arrow.get([edge.targetColorId[0], edge.targetColorId[1], edge.targetColorId[2]].join(",")).add(arrowOffsetCount++);
         } else {
+            // 全局开关：决定所有非自环边使用直线或曲线
+            const isStraight = !!STYLE.edgeGlobalStraight;
             const [x1, y1] = scale(edge.startPoint.x, edge.startPoint.y);
             const [x2, y2] = scale(edge.endPoint.x, edge.endPoint.y);
-            // 使用起点终点构成的矩形角点，构造“中心对称”的四次贝塞尔：P1=(sx,ty), P2=中心, P3=(tx,sy)
-            const sx = x1, sy = y1;
-            const tx = x2, ty = y2;
-            const midx = (sx + tx) * 0.5;
-            const midy = (sy + ty) * 0.5;
-            const alphaX = (STYLE.edgeCurveOffsetRatioX ?? 0.25); // X方向插值比例
-            const alphaY = (STYLE.edgeCurveOffsetRatioY ?? 0.25); // Y方向插值比例
-            const p1x = tx * (1 - alphaX) + midx * alphaX; // 终点角点 -> 中心，X方向插值
-            const p1y = sy * (1 - alphaY) + midy * alphaY; // 终点角点 -> 中心，Y方向插值
-            const p2x = midx, p2y = midy; // 中心点，保证中心对称
-            const p3x = sx * (1 - alphaX) + midx * alphaX; // 起点角点 -> 中心，X方向插值
-            const p3y = ty * (1 - alphaY) + midy * alphaY; // 起点角点 -> 中心，Y方向插值
-
             const segs = Math.max(8, Math.floor(STYLE.edgeCurveSegments ?? 24));
-            let ax0_last = sx, ay0_last = sy, ax1_last = sx, ay1_last = sy; // 记录最后一段采样
-            for (let i = 0; i < segs; i++) {
-                const t0 = i / segs;
-                const t1 = (i + 1) / segs;
-                const u0 = 1 - t0, u1 = 1 - t1;
-                const ax0 = u0*u0*u0*u0 * sx + 4*u0*u0*u0*t0 * p1x + 6*u0*u0*t0*t0 * p2x + 4*u0*t0*t0*t0 * p3x + t0*t0*t0*t0 * tx;
-                const ay0 = u0*u0*u0*u0 * sy + 4*u0*u0*u0*t0 * p1y + 6*u0*u0*t0*t0 * p2y + 4*u0*t0*t0*t0 * p3y + t0*t0*t0*t0 * ty;
-                const ax1 = u1*u1*u1*u1 * sx + 4*u1*u1*u1*t1 * p1x + 6*u1*u1*t1*t1 * p2x + 4*u1*t1*t1*t1 * p3x + t1*t1*t1*t1 * tx;
-                const ay1 = u1*u1*u1*u1 * sy + 4*u1*u1*u1*t1 * p1y + 6*u1*u1*t1*t1 * p2y + 4*u1*t1*t1*t1 * p3y + t1*t1*t1*t1 * ty;
-                polylines.push(ax0, ay0, ...edge.sourceColorId, ax1, ay1, ...edge.targetColorId);
-                ax0_last = ax0; ay0_last = ay0; ax1_last = ax1; ay1_last = ay1; // 更新最后一段
-                // 最小地图：用像素坐标采样同样的“四次中心对称曲线”
-                const csx = edge.startPoint.x, csy = edge.startPoint.y;
-                const ctx = edge.endPoint.x, cty = edge.endPoint.y;
-                const cmidx = (csx + ctx) * 0.5;
-                const cmidy = (csy + cty) * 0.5;
-                const cp1x = ctx * (1 - alphaX) + cmidx * alphaX; // 终点角点 -> 中心，X方向插值
-                const cp1y = csy * (1 - alphaY) + cmidy * alphaY; // 终点角点 -> 中心，Y方向插值
-                const cp2x = cmidx, cp2y = cmidy;
-                const cp3x = csx * (1 - alphaX) + cmidx * alphaX; // 起点角点 -> 中心，X方向插值
-                const cp3y = cty * (1 - alphaY) + cmidy * alphaY; // 起点角点 -> 中心，Y方向插值
-                const cx0 = (1 - t0)**4 * csx + 4*(1 - t0)**3 * t0 * cp1x + 6*(1 - t0)**2 * t0**2 * cp2x + 4*(1 - t0) * t0**3 * cp3x + t0**4 * ctx;
-                const cy0 = (1 - t0)**4 * csy + 4*(1 - t0)**3 * t0 * cp1y + 6*(1 - t0)**2 * t0**2 * cp2y + 4*(1 - t0) * t0**3 * cp3y + t0**4 * cty;
-                const cx1 = (1 - t1)**4 * csx + 4*(1 - t1)**3 * t1 * cp1x + 6*(1 - t1)**2 * t1**2 * cp2x + 4*(1 - t1) * t1**3 * cp3x + t1**4 * ctx;
-                const cy1 = (1 - t1)**4 * csy + 4*(1 - t1)**3 * t1 * cp1y + 6*(1 - t1)**2 * t1**2 * cp2y + 4*(1 - t1) * t1**3 * cp3y + t1**4 * cty;
-                polylines_mini.push(cx0, cy0, ...edge.sourceColorId, cx1, cy1, ...edge.targetColorId);
+            if (isStraight) {
+                // 直线：按相同段数线性采样，保证拖拽更新逻辑一致
+                let ax0_last = x1, ay0_last = y1, ax1_last = x1, ay1_last = y1;
+                for (let i = 0; i < segs; i++) {
+                    const t0 = i / segs;
+                    const t1 = (i + 1) / segs;
+                    const ax0 = x1 * (1 - t0) + x2 * t0;
+                    const ay0 = y1 * (1 - t0) + y2 * t0;
+                    const ax1 = x1 * (1 - t1) + x2 * t1;
+                    const ay1 = y1 * (1 - t1) + y2 * t1;
+                    polylines.push(ax0, ay0, ...edge.sourceColorId, ax1, ay1, ...edge.targetColorId);
+                    ax0_last = ax0; ay0_last = ay0; ax1_last = ax1; ay1_last = ay1;
+                    // 最小地图线性采样
+                    const cx0 = edge.startPoint.x * (1 - t0) + edge.endPoint.x * t0;
+                    const cy0 = edge.startPoint.y * (1 - t0) + edge.endPoint.y * t0;
+                    const cx1 = edge.startPoint.x * (1 - t1) + edge.endPoint.x * t1;
+                    const cy1 = edge.startPoint.y * (1 - t1) + edge.endPoint.y * t1;
+                    polylines_mini.push(cx0, cy0, ...edge.sourceColorId, cx1, cy1, ...edge.targetColorId);
+                    DataManager.adjGraph.get([edge.sourceColorId[0], edge.sourceColorId[1], edge.sourceColorId[2]].join(",")).add(edgeOffsetCount);
+                    DataManager.adjGraph.get([edge.targetColorId[0], edge.targetColorId[1], edge.targetColorId[2]].join(",")).add(edgeOffsetCount++);
+                }
+                // 箭头：沿最后一段直线方向后退 nearDist
+                const L_last = Math.hypot(ax1_last - ax0_last, ay1_last - ay0_last) || 1.0;
+                const nearDist = (STYLE.arrowSize ?? 0.03) * 0.5;
+                const r = Math.min(1.0, nearDist / L_last);
+                const px1 = x2 * (1 - r) + ax0_last * r;
+                const py1 = y2 * (1 - r) + ay0_last * r;
+                arrows.push(px1, py1, x2, y2, ...edge.sourceColorId, ...edge.targetColorId);
+                DataManager.adjGraph_arrow.get([edge.sourceColorId[0], edge.sourceColorId[1], edge.sourceColorId[2]].join(",")).add(arrowOffsetCount);
+                DataManager.adjGraph_arrow.get([edge.targetColorId[0], edge.targetColorId[1], edge.targetColorId[2]].join(",")).add(arrowOffsetCount++);
+                // 记录直线边，用于拖拽阶段识别
+                DataManager.straightEdges.add([edge.sourceColorId[0], edge.sourceColorId[1], edge.sourceColorId[2]].join(",") + "->" + [edge.targetColorId[0], edge.targetColorId[1], edge.targetColorId[2]].join(","));
+            } else {
+                // 曲线：按原有四次中心对称曲线采样
+                const sx = x1, sy = y1;
+                const tx = x2, ty = y2;
+                const midx = (sx + tx) * 0.5;
+                const midy = (sy + ty) * 0.5;
+                const alphaX = (STYLE.edgeCurveOffsetRatioX ?? 0.25); // X方向插值比例
+                const alphaY = (STYLE.edgeCurveOffsetRatioY ?? 0.25); // Y方向插值比例
+                const p1x = tx * (1 - alphaX) + midx * alphaX; // 终点角点 -> 中心，X方向插值
+                const p1y = sy * (1 - alphaY) + midy * alphaY; // 终点角点 -> 中心，Y方向插值
+                const p2x = midx, p2y = midy; // 中心点，保证中心对称
+                const p3x = sx * (1 - alphaX) + midx * alphaX; // 起点角点 -> 中心，X方向插值
+                const p3y = ty * (1 - alphaY) + midy * alphaY; // 起点角点 -> 中心，Y方向插值
 
-                DataManager.adjGraph.get([edge.sourceColorId[0], edge.sourceColorId[1], edge.sourceColorId[2]].join(",")).add(edgeOffsetCount);
-                DataManager.adjGraph.get([edge.targetColorId[0], edge.targetColorId[1], edge.targetColorId[2]].join(",")).add(edgeOffsetCount++);
+                let ax0_last = sx, ay0_last = sy, ax1_last = sx, ay1_last = sy; // 记录最后一段采样
+                for (let i = 0; i < segs; i++) {
+                    const t0 = i / segs;
+                    const t1 = (i + 1) / segs;
+                    const u0 = 1 - t0, u1 = 1 - t1;
+                    const ax0 = u0*u0*u0*u0 * sx + 4*u0*u0*u0*t0 * p1x + 6*u0*u0*t0*t0 * p2x + 4*u0*t0*t0*t0 * p3x + t0*t0*t0*t0 * tx;
+                    const ay0 = u0*u0*u0*u0 * sy + 4*u0*u0*u0*t0 * p1y + 6*u0*u0*t0*t0 * p2y + 4*u0*t0*t0*t0 * p3y + t0*t0*t0*t0 * ty;
+                    const ax1 = u1*u1*u1*u1 * sx + 4*u1*u1*u1*t1 * p1x + 6*u1*u1*t1*t1 * p2x + 4*u1*t1*t1*t1 * p3x + t1*t1*t1*t1 * tx;
+                    const ay1 = u1*u1*u1*u1 * sy + 4*u1*u1*u1*t1 * p1y + 6*u1*u1*t1*t1 * p2y + 4*u1*t1*t1*t1 * p3y + t1*t1*t1*t1 * ty;
+                    polylines.push(ax0, ay0, ...edge.sourceColorId, ax1, ay1, ...edge.targetColorId);
+                    ax0_last = ax0; ay0_last = ay0; ax1_last = ax1; ay1_last = ay1; // 更新最后一段
+                    // 最小地图：用像素坐标采样同样的“四次中心对称曲线”
+                    const csx = edge.startPoint.x, csy = edge.startPoint.y;
+                    const ctx = edge.endPoint.x, cty = edge.endPoint.y;
+                    const cmidx = (csx + ctx) * 0.5;
+                    const cmidy = (csy + cty) * 0.5;
+                    const cp1x = ctx * (1 - alphaX) + cmidx * alphaX; // 终点角点 -> 中心，X方向插值
+                    const cp1y = csy * (1 - alphaY) + cmidy * alphaY; // 终点角点 -> 中心，Y方向插值
+                    const cp2x = cmidx, cp2y = cmidy;
+                    const cp3x = csx * (1 - alphaX) + cmidx * alphaX; // 起点角点 -> 中心，X方向插值
+                    const cp3y = cty * (1 - alphaY) + cmidy * alphaY; // 起点角点 -> 中心，Y方向插值
+                    const cx0 = (1 - t0)**4 * csx + 4*(1 - t0)**3 * t0 * cp1x + 6*(1 - t0)**2 * t0**2 * cp2x + 4*(1 - t0) * t0**3 * cp3x + t0**4 * ctx;
+                    const cy0 = (1 - t0)**4 * csy + 4*(1 - t0)**3 * t0 * cp1y + 6*(1 - t0)**2 * t0**2 * cp2y + 4*(1 - t0) * t0**3 * cp3y + t0**4 * cty;
+                    const cx1 = (1 - t1)**4 * csx + 4*(1 - t1)**3 * t1 * cp1x + 6*(1 - t1)**2 * t1**2 * cp2x + 4*(1 - t1) * t1**3 * cp3x + t1**4 * ctx;
+                    const cy1 = (1 - t1)**4 * csy + 4*(1 - t1)**3 * t1 * cp1y + 6*(1 - t1)**2 * t1**2 * cp2y + 4*(1 - t1) * t1**3 * cp3y + t1**4 * cty;
+                    polylines_mini.push(cx0, cy0, ...edge.sourceColorId, cx1, cy1, ...edge.targetColorId);
+
+                    DataManager.adjGraph.get([edge.sourceColorId[0], edge.sourceColorId[1], edge.sourceColorId[2]].join(",")).add(edgeOffsetCount);
+                    DataManager.adjGraph.get([edge.targetColorId[0], edge.targetColorId[1], edge.targetColorId[2]].join(",")).add(edgeOffsetCount++);
+                }
+
+                // 箭头使用四次贝塞尔在 t=1 的切线方向：B'(1) = 4*(P4 - P1)（靠近终点的角点）
+                const L_last = Math.hypot(ax1_last - ax0_last, ay1_last - ay0_last) || 1.0;
+                const nearDist = (STYLE.arrowSize ?? 0.03) * 0.5;
+                const r = Math.min(1.0, nearDist / L_last);
+                const px1 = x2 * (1 - r) + ax0_last * r; // 基点位于最后一段折线上
+                const py1 = y2 * (1 - r) + ay0_last * r;
+                arrows.push(px1, py1, x2, y2, ...edge.sourceColorId, ...edge.targetColorId);
+                DataManager.adjGraph_arrow.get([edge.sourceColorId[0], edge.sourceColorId[1], edge.sourceColorId[2]].join(",")).add(arrowOffsetCount);
+                DataManager.adjGraph_arrow.get([edge.targetColorId[0], edge.targetColorId[1], edge.targetColorId[2]].join(",")).add(arrowOffsetCount++);
             }
-
-            // 箭头使用四次贝塞尔在 t=1 的切线方向：B'(1) = 4*(P4 - P1)（靠近终点的角点）
-            const tx_dx = 4 * (tx - p1x);
-            const tx_dy = 4 * (ty - p1y);
-            const L_last = Math.hypot(ax1_last - ax0_last, ay1_last - ay0_last) || 1.0;
-            const nearDist = (STYLE.arrowSize ?? 0.03) * 0.5;
-            const r = Math.min(1.0, nearDist / L_last);
-            const px1 = x2 * (1 - r) + ax0_last * r; // 基点位于最后一段折线上
-            const py1 = y2 * (1 - r) + ay0_last * r;
-            arrows.push(px1, py1, x2, y2, ...edge.sourceColorId, ...edge.targetColorId);
-            DataManager.adjGraph_arrow.get([edge.sourceColorId[0], edge.sourceColorId[1], edge.sourceColorId[2]].join(",")).add(arrowOffsetCount);
-            DataManager.adjGraph_arrow.get([edge.targetColorId[0], edge.targetColorId[1], edge.targetColorId[2]].join(",")).add(arrowOffsetCount++);
         }
 
     });
@@ -1896,31 +1937,44 @@ function arrowMoveById(id, arr, stride, selectedOffset, [shiftX, shiftY], polyAr
             continue;
         }
         segIdxList.sort((a, b) => a - b);
-        // 使用与初始化一致的四次贝塞尔端点切线来计算箭头方向
         const firstSegI = segIdxList[0] + 1;
         const lastSegI = segIdxList[segIdxList.length - 1] + 1;
-        const sx = polyArr[(firstSegI - 1) * polyStride + 0];
-        const sy = polyArr[(firstSegI - 1) * polyStride + 1];
-        const tx = polyArr[(lastSegI - 1) * polyStride + 6];
-        const ty = polyArr[(lastSegI - 1) * polyStride + 7];
-
-        // 构造与采样一致的“中心对称四次曲线”控制点：P0=(sx,sy), P1=(tx,sy)->中心插值, P2=中心, P3=(sx,ty)->中心插值, P4=(tx,ty)
-        const midx = (sx + tx) * 0.5;
-        const midy = (sy + ty) * 0.5;
-        const alphaX = (STYLE.edgeCurveOffsetRatioX ?? 0.25);
-        const alphaY = (STYLE.edgeCurveOffsetRatioY ?? 0.25);
-        const p3x = sx * (1 - alphaX) + midx * alphaX; // 靠近终点的角点（起点角点 -> 中心）
-        const p3y = ty * (1 - alphaY) + midy * alphaY;
-
-        // 四次贝塞尔在 t=1 的切线方向：B'(1) = 4*(P4 - P3)
-        const dx = (tx - p3x);
-        const dy = (ty - p3y);
-        const len = Math.hypot(dx, dy) || 1.0;
-        const nearDist = (STYLE.arrowSize ?? 0.03) * 0.5;
-        const tipX = tx;
-        const tipY = ty;
-        const px1 = tipX - (dx / len) * nearDist;
-        const py1 = tipY - (dy / len) * nearDist;
+        const isStraight = !!STYLE.edgeGlobalStraight;
+        let px1, py1, tipX, tipY;
+        if (isStraight) {
+            // 直线边：以最后一段方向为准，尖端贴终点，基点后退 nearDist
+            const ax0 = polyArr[(lastSegI - 1) * polyStride + 0];
+            const ay0 = polyArr[(lastSegI - 1) * polyStride + 1];
+            const ax1 = polyArr[(lastSegI - 1) * polyStride + 6];
+            const ay1 = polyArr[(lastSegI - 1) * polyStride + 7];
+            const L = Math.hypot(ax1 - ax0, ay1 - ay0) || 1.0;
+            const nearDist = (STYLE.arrowSize ?? 0.03) * 0.5;
+            const r = Math.min(1.0, nearDist / L);
+            px1 = ax1 * (1 - r) + ax0 * r;
+            py1 = ay1 * (1 - r) + ay0 * r;
+            tipX = ax1;
+            tipY = ay1;
+        } else {
+            // 曲线边：使用四次贝塞尔端点切线方向
+            const sx = polyArr[(firstSegI - 1) * polyStride + 0];
+            const sy = polyArr[(firstSegI - 1) * polyStride + 1];
+            const tx = polyArr[(lastSegI - 1) * polyStride + 6];
+            const ty = polyArr[(lastSegI - 1) * polyStride + 7];
+            const midx = (sx + tx) * 0.5;
+            const midy = (sy + ty) * 0.5;
+            const alphaX = (STYLE.edgeCurveOffsetRatioX ?? 0.25);
+            const alphaY = (STYLE.edgeCurveOffsetRatioY ?? 0.25);
+            const p3x = sx * (1 - alphaX) + midx * alphaX;
+            const p3y = ty * (1 - alphaY) + midy * alphaY;
+            const dx = (tx - p3x);
+            const dy = (ty - p3y);
+            const len = Math.hypot(dx, dy) || 1.0;
+            const nearDist = (STYLE.arrowSize ?? 0.03) * 0.5;
+            tipX = tx;
+            tipY = ty;
+            px1 = tipX - (dx / len) * nearDist;
+            py1 = tipY - (dy / len) * nearDist;
+        }
 
         // 写回箭头实例
         arr[(i - 1) * stride + 0] = px1;
@@ -1996,29 +2050,59 @@ function edgeMoveById(id, arr, stride, selectedOffset, [shiftX, shiftY]) {
         } else {
             tx += shiftX; ty += shiftY;
         }
-        const midx = (sx + tx) * 0.5;
-        const midy = (sy + ty) * 0.5;
-        const p1x = tx * (1 - alphaX) + midx * alphaX;
-        const p1y = sy * (1 - alphaY) + midy * alphaY;
-        const p2x = midx, p2y = midy;
-        const p3x = sx * (1 - alphaX) + midx * alphaX;
-        const p3y = ty * (1 - alphaY) + midy * alphaY;
+        // 读取颜色ID以判断是否为直线边
+        const rS0 = arr[startI * stride + selectedOffset - 9];
+        const gS0 = arr[startI * stride + selectedOffset - 8];
+        const bS0 = arr[startI * stride + selectedOffset - 7];
+        const rT0 = arr[startI * stride + selectedOffset - 3];
+        const gT0 = arr[startI * stride + selectedOffset - 2];
+        const bT0 = arr[startI * stride + selectedOffset - 1];
+        const sourceStr0 = [rS0, gS0, bS0].join(",");
+        const targetStr0 = [rT0, gT0, bT0].join(",");
+        const isStraight = !!STYLE.edgeGlobalStraight;
 
-        for (let j = 0; j < segCount; j++) {
-            const value = idxList[j];
-            const i = value + 1;
-            const t0 = j / segCount;
-            const t1 = (j + 1) / segCount;
-            const u0 = 1 - t0, u1 = 1 - t1;
-            const ax0 = u0*u0*u0*u0 * sx + 4*u0*u0*u0*t0 * p1x + 6*u0*u0*t0*t0 * p2x + 4*u0*t0*t0*t0 * p3x + t0*t0*t0*t0 * tx;
-            const ay0 = u0*u0*u0*u0 * sy + 4*u0*u0*u0*t0 * p1y + 6*u0*u0*t0*t0 * p2y + 4*u0*t0*t0*t0 * p3y + t0*t0*t0*t0 * ty;
-            const ax1 = u1*u1*u1*u1 * sx + 4*u1*u1*u1*t1 * p1x + 6*u1*u1*t1*t1 * p2x + 4*u1*t1*t1*t1 * p3x + t1*t1*t1*t1 * tx;
-            const ay1 = u1*u1*u1*u1 * sy + 4*u1*u1*u1*t1 * p1y + 6*u1*u1*t1*t1 * p2y + 4*u1*t1*t1*t1 * p3y + t1*t1*t1*t1 * ty;
-            // 写回当前分段坐标
-            arr[(i - 1) * stride + 0] = ax0;
-            arr[(i - 1) * stride + 1] = ay0;
-            arr[(i - 1) * stride + 6] = ax1;
-            arr[(i - 1) * stride + 7] = ay1;
+        if (isStraight) {
+            // 直线：线性重采样
+            for (let j = 0; j < segCount; j++) {
+                const value = idxList[j];
+                const i = value + 1;
+                const t0 = j / segCount;
+                const t1 = (j + 1) / segCount;
+                const ax0 = sx * (1 - t0) + tx * t0;
+                const ay0 = sy * (1 - t0) + ty * t0;
+                const ax1 = sx * (1 - t1) + tx * t1;
+                const ay1 = sy * (1 - t1) + ty * t1;
+                arr[(i - 1) * stride + 0] = ax0;
+                arr[(i - 1) * stride + 1] = ay0;
+                arr[(i - 1) * stride + 6] = ax1;
+                arr[(i - 1) * stride + 7] = ay1;
+            }
+        } else {
+            // 曲线：四次中心对称曲线重采样
+            const midx = (sx + tx) * 0.5;
+            const midy = (sy + ty) * 0.5;
+            const p1x = tx * (1 - alphaX) + midx * alphaX;
+            const p1y = sy * (1 - alphaY) + midy * alphaY;
+            const p2x = midx, p2y = midy;
+            const p3x = sx * (1 - alphaX) + midx * alphaX;
+            const p3y = ty * (1 - alphaY) + midy * alphaY;
+
+            for (let j = 0; j < segCount; j++) {
+                const value = idxList[j];
+                const i = value + 1;
+                const t0 = j / segCount;
+                const t1 = (j + 1) / segCount;
+                const u0 = 1 - t0, u1 = 1 - t1;
+                const ax0 = u0*u0*u0*u0 * sx + 4*u0*u0*u0*t0 * p1x + 6*u0*u0*t0*t0 * p2x + 4*u0*t0*t0*t0 * p3x + t0*t0*t0*t0 * tx;
+                const ay0 = u0*u0*u0*u0 * sy + 4*u0*u0*u0*t0 * p1y + 6*u0*u0*t0*t0 * p2y + 4*u0*t0*t0*t0 * p3y + t0*t0*t0*t0 * ty;
+                const ax1 = u1*u1*u1*u1 * sx + 4*u1*u1*u1*t1 * p1x + 6*u1*u1*t1*t1 * p2x + 4*u1*t1*t1*t1 * p3x + t1*t1*t1*t1 * tx;
+                const ay1 = u1*u1*u1*u1 * sy + 4*u1*u1*u1*t1 * p1y + 6*u1*u1*t1*t1 * p2y + 4*u1*t1*t1*t1 * p3y + t1*t1*t1*t1 * ty;
+                // 写回当前分段坐标
+                arr[(i - 1) * stride + 0] = ax0;
+                arr[(i - 1) * stride + 1] = ay0;
+                arr[(i - 1) * stride + 6] = ax1;
+                arr[(i - 1) * stride + 7] = ay1;
+            }
         }
     }
 }
@@ -2062,27 +2146,57 @@ function mini_EdgeMoveById(id, arr, stride, selectedOffset, [shiftX, shiftY]) {
         let ctx = arr[(endI - 1) * stride + 6];
         let cty = arr[(endI - 1) * stride + 7];
         if (g.sourceIsMoved) { csx += shiftX; csy += shiftY; } else { ctx += shiftX; cty += shiftY; }
-        const cmidx = (csx + ctx) * 0.5;
-        const cmidy = (csy + cty) * 0.5;
-        const cp1x = ctx * (1 - alphaX) + cmidx * alphaX;
-        const cp1y = csy * (1 - alphaY) + cmidy * alphaY;
-        const cp2x = cmidx, cp2y = cmidy;
-        const cp3x = csx * (1 - alphaX) + cmidx * alphaX;
-        const cp3y = cty * (1 - alphaY) + cmidy * alphaY;
+        // 读取颜色ID以判断是否为直线边
+        const rS0 = arr[startI * stride + selectedOffset - 9];
+        const gS0 = arr[startI * stride + selectedOffset - 8];
+        const bS0 = arr[startI * stride + selectedOffset - 7];
+        const rT0 = arr[startI * stride + selectedOffset - 3];
+        const gT0 = arr[startI * stride + selectedOffset - 2];
+        const bT0 = arr[startI * stride + selectedOffset - 1];
+        const sourceStr0 = [rS0, gS0, bS0].join(",");
+        const targetStr0 = [rT0, gT0, bT0].join(",");
+        const isStraight = !!STYLE.edgeGlobalStraight;
 
-        for (let j = 0; j < segCount; j++) {
-            const value = idxList[j];
-            const i = value + 1;
-            const t0 = j / segCount;
-            const t1 = (j + 1) / segCount;
-            const cx0 = (1 - t0)**4 * csx + 4*(1 - t0)**3 * t0 * cp1x + 6*(1 - t0)**2 * t0**2 * cp2x + 4*(1 - t0) * t0**3 * cp3x + t0**4 * ctx;
-            const cy0 = (1 - t0)**4 * csy + 4*(1 - t0)**3 * t0 * cp1y + 6*(1 - t0)**2 * t0**2 * cp2y + 4*(1 - t0) * t0**3 * cp3y + t0**4 * cty;
-            const cx1 = (1 - t1)**4 * csx + 4*(1 - t1)**3 * t1 * cp1x + 6*(1 - t1)**2 * t1**2 * cp2x + 4*(1 - t1) * t1**3 * cp3x + t1**4 * ctx;
-            const cy1 = (1 - t1)**4 * csy + 4*(1 - t1)**3 * t1 * cp1y + 6*(1 - t1)**2 * t1**2 * cp2y + 4*(1 - t1) * t1**3 * cp3y + t1**4 * cty;
-            arr[(i - 1) * stride + 0] = cx0;
-            arr[(i - 1) * stride + 1] = cy0;
-            arr[(i - 1) * stride + 6] = cx1;
-            arr[(i - 1) * stride + 7] = cy1;
+        if (isStraight) {
+            // 直线：线性重采样（像素坐标）
+            for (let j = 0; j < segCount; j++) {
+                const value = idxList[j];
+                const i = value + 1;
+                const t0 = j / segCount;
+                const t1 = (j + 1) / segCount;
+                const cx0 = csx * (1 - t0) + ctx * t0;
+                const cy0 = csy * (1 - t0) + cty * t0;
+                const cx1 = csx * (1 - t1) + ctx * t1;
+                const cy1 = csy * (1 - t1) + cty * t1;
+                arr[(i - 1) * stride + 0] = cx0;
+                arr[(i - 1) * stride + 1] = cy0;
+                arr[(i - 1) * stride + 6] = cx1;
+                arr[(i - 1) * stride + 7] = cy1;
+            }
+        } else {
+            // 曲线：四次中心对称曲线重采样（像素坐标）
+            const cmidx = (csx + ctx) * 0.5;
+            const cmidy = (csy + cty) * 0.5;
+            const cp1x = ctx * (1 - alphaX) + cmidx * alphaX;
+            const cp1y = csy * (1 - alphaY) + cmidy * alphaY;
+            const cp2x = cmidx, cp2y = cmidy;
+            const cp3x = csx * (1 - alphaX) + cmidx * alphaX;
+            const cp3y = cty * (1 - alphaY) + cmidy * alphaY;
+
+            for (let j = 0; j < segCount; j++) {
+                const value = idxList[j];
+                const i = value + 1;
+                const t0 = j / segCount;
+                const t1 = (j + 1) / segCount;
+                const cx0 = (1 - t0)**4 * csx + 4*(1 - t0)**3 * t0 * cp1x + 6*(1 - t0)**2 * t0**2 * cp2x + 4*(1 - t0) * t0**3 * cp3x + t0**4 * ctx;
+                const cy0 = (1 - t0)**4 * csy + 4*(1 - t0)**3 * t0 * cp1y + 6*(1 - t0)**2 * t0**2 * cp2y + 4*(1 - t0) * t0**3 * cp3y + t0**4 * cty;
+                const cx1 = (1 - t1)**4 * csx + 4*(1 - t1)**3 * t1 * cp1x + 6*(1 - t1)**2 * t1**2 * cp2x + 4*(1 - t1) * t1**3 * cp3x + t1**4 * ctx;
+                const cy1 = (1 - t1)**4 * csy + 4*(1 - t1)**3 * t1 * cp1y + 6*(1 - t1)**2 * t1**2 * cp2y + 4*(1 - t1) * t1**3 * cp3y + t1**4 * cty;
+                arr[(i - 1) * stride + 0] = cx0;
+                arr[(i - 1) * stride + 1] = cy0;
+                arr[(i - 1) * stride + 6] = cx1;
+                arr[(i - 1) * stride + 7] = cy1;
+            }
         }
     }
 }
